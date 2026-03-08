@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Web Rec Studio - Hard Stealth Lock</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/RecordRTC/5.6.2/RecordRTC.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root { --accent: #00ff41; --bg: #0a0a0a; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: white; text-align: center; margin: 0; transition: all 0.3s; overflow-x: hidden; }
+        
+        /* PANTALLA ESPÍA */
+        #stealthOverlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: #000; display: none; z-index: 9999; 
+            flex-direction: column; justify-content: center; align-items: center;
+            cursor: none; 
+        }
+
+        @keyframes chameleon {
+            0% { color: #ff0000; }
+            20% { color: #ffff00; }
+            40% { color: #00ff00; }
+            60% { color: #00ffff; }
+            80% { color: #0000ff; }
+            100% { color: #ff00ff; }
+        }
+
+        #bigClock { 
+            font-size: clamp(4rem, 20vw, 8rem); 
+            font-weight: 200; 
+            letter-spacing: -2px; 
+            margin-bottom: 0; 
+            pointer-events: none;
+            animation: chameleon 10s infinite alternate linear;
+        }
+
+        #secretTimer { font-family: 'Courier New', monospace; font-size: 14px; margin-top: -10px; pointer-events: none; }
+
+        /* Interfaz Normal */
+        .main-content { padding: 10px; transition: opacity 0.3s; box-sizing: border-box; }
+        .video-container { position: relative; max-width: 800px; margin: 10px auto; background: #000; border: 2px solid #333; border-radius: 12px; overflow: hidden; }
+        canvas { width: 100%; height: auto; display: block; }
+
+        .night-vision canvas { filter: brightness(1.6) contrast(1.2) sepia(50%) hue-rotate(80deg) saturate(1.5) !important; }
+        .flash-on { background: white !important; color: black !important; }
+
+        body.stealth-active .main-content { display: none; }
+        body.stealth-active #stealthOverlay { display: flex; }
+
+        .controls { background: #1a1a1a; padding: 15px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; border-top: 1px solid #333; }
+        .group { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11px; color: #888; }
+        button { padding: 10px 14px; font-size: 12px; cursor: pointer; border-radius: 6px; border: none; font-weight: bold; flex-grow: 1; min-width: 120px; max-width: 200px; }
+        
+        .btn-tool { background: #333; color: white; }
+        .active { background: var(--accent) !important; color: black !important; }
+        #btnStart { background: #27ae60; color: white; }
+        #btnRecord { background: #e67e22; color: white; }
+        #btnStop { background: #c0392b; color: white; }
+        button:disabled { background: #222 !important; color: #555 !important; }
+
+        /* PANEL LAN PARA CELULAR - ADAPTADO */
+        #lanControl { background: #111; border: 1px solid var(--accent); padding: 15px; margin: 10px; border-radius: 10px; display: none; box-shadow: 0 0 15px rgba(0,255,65,0.2); }
+        #lanControl input { padding: 12px; width: 100%; max-width: 200px; border-radius: 5px; border: 1px solid #444; background: #000; color: white; margin-bottom: 10px; box-sizing: border-box; }
+        .remote-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+
+        @media (max-width: 480px) {
+            h2 { font-size: 1.2rem; }
+            #myIdDisplay { font-size: 14px; }
+            .controls { gap: 5px; padding: 10px; }
+            button { font-size: 11px; padding: 12px 5px; min-width: 90px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="lanControl">
+        <div style="font-size: 12px; color: var(--accent); margin-bottom: 10px; font-weight: bold;">CONTROL REMOTO LAN</div>
+        <input type="text" id="targetPeerId" placeholder="PEGA EL ID DE LA PC AQUÍ">
+        <div class="remote-btns">
+            <button onclick="sendRemote('START')" style="background: #27ae60;">CAM ON</button>
+            <button onclick="sendRemote('STEALTH')" style="background: #333;">RELOJ (S)</button>
+            <button onclick="sendRemote('RECORD')" style="background: #e67e22;">GRABAR</button>
+            <button onclick="sendRemote('STOP')" style="background: #c0392b;">GUARDAR</button>
+        </div>
+    </div>
+
+    <div id="stealthOverlay">
+        <div id="bigClock">00:00</div>
+        <div id="secretTimer">STANDBY_MODE_v2.0.4</div>
+    </div>
+
+    <div class="main-content">
+        <h2>Web Rec <span style="color:var(--accent)">STEALTH CLOCK</span></h2>
+        <div id="myIdDisplay" style="color:var(--accent); font-family: monospace; font-size: 16px; margin-bottom: 10px; word-break: break-all;">ID: Generando...</div>
+        
+        <div class="video-container">
+            <canvas id="canvasPreview"></canvas>
+        </div>
+        <video id="v1" autoplay muted playsinline style="display:none;"></video>
+
+        <div class="controls">
+            <button id="btnStart">1. Encender Cámara</button>
+            <div class="group">
+                <label>BRILLO</label>
+                <input type="range" id="brightRange" min="1" max="4" step="0.1" value="1" style="width: 80px;">
+            </div>
+            <button id="btnNight" class="btn-tool">🌕 Nocturno</button>
+            <button id="btnFlash" class="btn-tool">💡 Flash</button>
+            <button id="btnStealth" class="btn-tool" disabled>🕵️ Modo Reloj (S)</button>
+            <button id="btnRecord" disabled>2. Grabar</button>
+            <button id="btnStop" disabled>3. Guardar</button>
+        </div>
+        <p id="status" style="color:#444; font-size: 12px;">Usa la tecla "S" para el modo espía.</p>
+    </div>
+
+    <script>
+        let recorder;
+        let stream;
+        let recordStartTime;
+        const canvas = document.getElementById('canvasPreview');
+        const ctx = canvas.getContext('2d');
+        const v1 = document.getElementById('v1');
+
+        // --- LÓGICA LAN MEJORADA ---
+        const peer = new Peer(null, { debug: 1 }); 
+        
+        peer.on('open', (id) => {
+            document.getElementById('myIdDisplay').innerText = `ID DE ESTA PC: ${id}`;
+        });
+
+        if(/Android|iPhone|iPad/i.test(navigator.userAgent)){
+            document.getElementById('lanControl').style.display = 'block';
+        }
+
+        function sendRemote(action) {
+            const id = document.getElementById('targetPeerId').value.trim();
+            if(!id) return alert("Pon el ID de la PC primero");
+            
+            // Conexión con reintento y log de estado
+            const conn = peer.connect(id, { reliable: true });
+            
+            conn.on('open', () => {
+                conn.send(action);
+            });
+
+            conn.on('error', (err) => {
+                console.error("Error de conexión:", err);
+                alert("No se pudo conectar. Verifica que el ID sea correcto.");
+            });
+        }
+
+        peer.on('connection', (conn) => {
+            conn.on('data', (data) => {
+                if(data === 'START') document.getElementById('btnStart').click();
+                if(data === 'STEALTH') document.body.classList.toggle('stealth-active');
+                if(data === 'RECORD') document.getElementById('btnRecord').click();
+                if(data === 'STOP') document.getElementById('btnStop').click();
+            });
+        });
+
+        // --- LÓGICA ORIGINAL ---
+        function updateClock() {
+            const now = new Date();
+            const h = now.getHours().toString().padStart(2, '0');
+            const m = now.getMinutes().toString().padStart(2, '0');
+            document.getElementById('bigClock').innerText = `${h}:${m}`;
+            const secretTimer = document.getElementById('secretTimer');
+            
+            if (recorder && recorder.getState() === 'recording') {
+                const diff = Math.floor((Date.now() - recordStartTime) / 1000);
+                const rm = Math.floor(diff / 60).toString().padStart(2, '0');
+                const rs = (diff % 60).toString().padStart(2, '0');
+                secretTimer.innerText = `KERN_SEC_ID: 0x${rm}${rs}_AUTO_RUN`;
+                secretTimer.style.color = "#ff4d4d"; 
+                secretTimer.style.opacity = (now.getMilliseconds() < 500) ? "1" : "0.4";
+            } else {
+                secretTimer.innerText = "STANDBY_MODE_v2.0.4";
+                secretTimer.style.color = "#666"; 
+                secretTimer.style.opacity = "1";
+            }
+            requestAnimationFrame(updateClock);
+        }
+
+        function draw() {
+            canvas.width = 1280; canvas.height = 720;
+            function render() {
+                if (v1.readyState === v1.HAVE_ENOUGH_DATA) {
+                    ctx.filter = `brightness(${document.getElementById('brightRange').value})`;
+                    ctx.drawImage(v1, 0, 0, canvas.width, canvas.height);
+                }
+                requestAnimationFrame(render);
+            }
+            render();
+        }
+
+        document.getElementById('btnStart').onclick = async () => {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                v1.srcObject = stream; v1.play();
+                draw(); updateClock();
+                document.getElementById('btnRecord').disabled = false;
+                document.getElementById('btnStealth').disabled = false;
+                document.getElementById('btnStart').disabled = true;
+            } catch (e) { alert("Acceso denegado."); }
+        };
+
+        window.onkeydown = (e) => {
+            if (e.key.toLowerCase() === 's') {
+                if (!document.getElementById('btnStealth').disabled) {
+                    document.body.classList.toggle('stealth-active');
+                }
+            }
+        };
+
+        document.getElementById('btnStealth').onclick = () => {
+            document.body.classList.add('stealth-active');
+        };
+
+        document.getElementById('btnNight').onclick = () => {
+            document.body.classList.toggle('night-vision');
+            document.getElementById('btnNight').classList.toggle('active');
+        };
+
+        document.getElementById('btnFlash').onclick = () => {
+            document.body.classList.toggle('flash-on');
+            document.getElementById('btnFlash').classList.toggle('active');
+        };
+
+        document.getElementById('btnRecord').onclick = function() {
+            const canvasStream = canvas.captureStream(30);
+            const finalStream = new MediaStream([...canvasStream.getVideoTracks(), ...stream.getAudioTracks()]);
+            recorder = new RecordRTC(finalStream, { type: 'video', mimeType: 'video/webm;codecs=vp9', bitsPerSecond: 6000000 });
+            recorder.startRecording();
+            recordStartTime = Date.now();
+            this.disabled = true;
+            document.getElementById('btnStop').disabled = false;
+            document.getElementById('status').innerText = "Grabando...";
+        };
+
+        document.getElementById('btnStop').onclick = function() {
+            recorder.stopRecording(() => {
+                RecordRTC.invokeSaveAsDialog(recorder.getBlob(), `security_log.mp4`);
+            });
+            this.disabled = true;
+            document.getElementById('btnRecord').disabled = false;
+        };
+    </script>
+</body>
+</html>
