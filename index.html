@@ -58,12 +58,10 @@
         #btnStop { background: #c0392b; color: white; }
         button:disabled { background: #222 !important; color: #555 !important; }
 
-        /* PANEL LAN PARA CELULAR */
         #lanControl { background: #111; border: 1px solid var(--accent); padding: 15px; margin: 10px; border-radius: 10px; display: none; box-shadow: 0 0 15px rgba(0,255,65,0.2); }
         #lanControl input { padding: 12px; width: 100%; max-width: 200px; border-radius: 5px; border: 1px solid #444; background: #000; color: white; margin-bottom: 10px; box-sizing: border-box; }
         .remote-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
         
-        /* Monitor remoto en celular */
         #remoteMonitor { width: 100%; max-width: 400px; background: #000; border: 1px solid #333; margin: 10px auto; border-radius: 8px; display: none; overflow: hidden; }
         #remoteVideo { width: 100%; height: auto; display: block; }
 
@@ -80,7 +78,7 @@
     <div id="lanControl">
         <div style="font-size: 12px; color: var(--accent); margin-bottom: 10px; font-weight: bold;">MONITOR Y CONTROL REMOTO</div>
         <input type="text" id="targetPeerId" placeholder="PEGA EL ID DE LA PC AQUÍ">
-        <button onclick="connectToPC()" style="background: var(--accent); color: black; margin-bottom: 10px;">VINCULAR DISPOSITIVO</button>
+        <button id="btnConnect" onclick="connectToPC()" style="background: var(--accent); color: black; margin-bottom: 10px;">VINCULAR DISPOSITIVO</button>
         
         <div id="remoteMonitor">
             <video id="remoteVideo" autoplay playsinline></video>
@@ -132,7 +130,6 @@
         const v1 = document.getElementById('v1');
         const remoteVideo = document.getElementById('remoteVideo');
 
-        // --- LÓGICA LAN ---
         const peer = new Peer(null, { debug: 1 }); 
         
         peer.on('open', (id) => {
@@ -141,49 +138,60 @@
 
         if(/Android|iPhone|iPad/i.test(navigator.userAgent)){
             document.getElementById('lanControl').style.display = 'block';
-            document.querySelector('.main-content').style.display = 'none'; // Oculta interfaz de cámara local en celular
+            document.querySelector('.main-content').style.display = 'none';
         }
 
-        // Función para que el celular inicie la conexión de video
-        function connectToPC() {
+        async function connectToPC() {
             const id = document.getElementById('targetPeerId').value.trim();
             if(!id) return alert("Pon el ID de la PC primero");
             
-            // Solicitar video de la PC
-            const call = peer.call(id, null); 
-            call.on('stream', (remoteStream) => {
-                document.getElementById('remoteMonitor').style.display = 'block';
-                remoteVideo.srcObject = remoteStream;
-            });
-
+            // 1. Enviar comando de encendido primero
             window.dataConn = peer.connect(id, { reliable: true });
-            alert("Conectado a la PC exitosamente");
+            
+            window.dataConn.on('open', () => {
+                window.dataConn.send('START'); // Forzar encendido de cámara en PC
+                
+                // 2. Esperar un momento y llamar para recibir video
+                setTimeout(() => {
+                    const call = peer.call(id, null); 
+                    call.on('stream', (remoteStream) => {
+                        document.getElementById('remoteMonitor').style.display = 'block';
+                        remoteVideo.srcObject = remoteStream;
+                    });
+                }, 1000);
+            });
         }
 
         function sendRemote(action) {
             if(window.dataConn && window.dataConn.open) {
                 window.dataConn.send(action);
             } else {
-                alert("Primero presiona VINCULAR DISPOSITIVO");
+                alert("Conexión perdida. Vincula de nuevo.");
             }
         }
 
-        // La PC responde a la llamada enviando el flujo del CANVAS
         peer.on('call', (call) => {
-            const canvasStream = canvas.captureStream(25); // Envía lo que se ve en el canvas (con filtros)
+            // La PC responde enviando el canvas (que ya tiene los filtros aplicados)
+            const canvasStream = canvas.captureStream(25);
             call.answer(canvasStream); 
         });
 
         peer.on('connection', (conn) => {
+            window.dataConn = conn; // Guardar referencia en la PC
             conn.on('data', (data) => {
-                if(data === 'START') document.getElementById('btnStart').click();
+                if(data === 'START') {
+                    // Si la cámara ya está encendida, solo avisar, si no, encenderla
+                    if(document.getElementById('btnStart').disabled === false) {
+                        document.getElementById('btnStart').click();
+                    }
+                }
                 if(data === 'STEALTH') document.body.classList.toggle('stealth-active');
                 if(data === 'RECORD') document.getElementById('btnRecord').click();
                 if(data === 'STOP') document.getElementById('btnStop').click();
             });
         });
 
-        // --- LÓGICA ORIGINAL ---
+        // --- FUNCIONES ORIGINALES (SIN CAMBIOS) ---
         function updateClock() {
             const now = new Date();
             const h = now.getHours().toString().padStart(2, '0');
@@ -227,7 +235,7 @@
                 document.getElementById('btnStealth').disabled = false;
                 document.getElementById('btnStart').disabled = true;
                 document.getElementById('status').innerText = "Cámara de PC Activa y Transmitiendo";
-            } catch (e) { alert("Error: Verifica permisos de cámara."); }
+            } catch (e) { console.error(e); }
         };
 
         window.onkeydown = (e) => {
