@@ -10,7 +10,6 @@
         :root { --accent: #00ff41; --bg: #0a0a0a; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: white; text-align: center; margin: 0; transition: all 0.3s; overflow-x: hidden; }
         
-        /* PANTALLA ESPÍA */
         #stealthOverlay { 
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
             background: #000; display: none; z-index: 9999; 
@@ -38,7 +37,6 @@
 
         #secretTimer { font-family: 'Courier New', monospace; font-size: 14px; margin-top: -10px; pointer-events: none; }
 
-        /* Interfaz Normal */
         .main-content { padding: 10px; transition: opacity 0.3s; box-sizing: border-box; }
         .video-container { position: relative; max-width: 800px; margin: 10px auto; background: #000; border: 2px solid #333; border-radius: 12px; overflow: hidden; }
         canvas { width: 100%; height: auto; display: block; }
@@ -60,10 +58,14 @@
         #btnStop { background: #c0392b; color: white; }
         button:disabled { background: #222 !important; color: #555 !important; }
 
-        /* PANEL LAN PARA CELULAR - ADAPTADO */
+        /* PANEL LAN PARA CELULAR */
         #lanControl { background: #111; border: 1px solid var(--accent); padding: 15px; margin: 10px; border-radius: 10px; display: none; box-shadow: 0 0 15px rgba(0,255,65,0.2); }
         #lanControl input { padding: 12px; width: 100%; max-width: 200px; border-radius: 5px; border: 1px solid #444; background: #000; color: white; margin-bottom: 10px; box-sizing: border-box; }
         .remote-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+        
+        /* Monitor remoto en celular */
+        #remoteMonitor { width: 100%; max-width: 400px; background: #000; border: 1px solid #333; margin: 10px auto; border-radius: 8px; display: none; overflow: hidden; }
+        #remoteVideo { width: 100%; height: auto; display: block; }
 
         @media (max-width: 480px) {
             h2 { font-size: 1.2rem; }
@@ -76,8 +78,14 @@
 <body>
 
     <div id="lanControl">
-        <div style="font-size: 12px; color: var(--accent); margin-bottom: 10px; font-weight: bold;">CONTROL REMOTO LAN</div>
+        <div style="font-size: 12px; color: var(--accent); margin-bottom: 10px; font-weight: bold;">MONITOR Y CONTROL REMOTO</div>
         <input type="text" id="targetPeerId" placeholder="PEGA EL ID DE LA PC AQUÍ">
+        <button onclick="connectToPC()" style="background: var(--accent); color: black; margin-bottom: 10px;">VINCULAR DISPOSITIVO</button>
+        
+        <div id="remoteMonitor">
+            <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+
         <div class="remote-btns">
             <button onclick="sendRemote('START')" style="background: #27ae60;">CAM ON</button>
             <button onclick="sendRemote('STEALTH')" style="background: #333;">RELOJ (S)</button>
@@ -122,8 +130,9 @@
         const canvas = document.getElementById('canvasPreview');
         const ctx = canvas.getContext('2d');
         const v1 = document.getElementById('v1');
+        const remoteVideo = document.getElementById('remoteVideo');
 
-        // --- LÓGICA LAN MEJORADA ---
+        // --- LÓGICA LAN ---
         const peer = new Peer(null, { debug: 1 }); 
         
         peer.on('open', (id) => {
@@ -132,24 +141,38 @@
 
         if(/Android|iPhone|iPad/i.test(navigator.userAgent)){
             document.getElementById('lanControl').style.display = 'block';
+            document.querySelector('.main-content').style.display = 'none'; // Oculta interfaz de cámara local en celular
         }
 
-        function sendRemote(action) {
+        // Función para que el celular inicie la conexión de video
+        function connectToPC() {
             const id = document.getElementById('targetPeerId').value.trim();
             if(!id) return alert("Pon el ID de la PC primero");
             
-            // Conexión con reintento y log de estado
-            const conn = peer.connect(id, { reliable: true });
-            
-            conn.on('open', () => {
-                conn.send(action);
+            // Solicitar video de la PC
+            const call = peer.call(id, null); 
+            call.on('stream', (remoteStream) => {
+                document.getElementById('remoteMonitor').style.display = 'block';
+                remoteVideo.srcObject = remoteStream;
             });
 
-            conn.on('error', (err) => {
-                console.error("Error de conexión:", err);
-                alert("No se pudo conectar. Verifica que el ID sea correcto.");
-            });
+            window.dataConn = peer.connect(id, { reliable: true });
+            alert("Conectado a la PC exitosamente");
         }
+
+        function sendRemote(action) {
+            if(window.dataConn && window.dataConn.open) {
+                window.dataConn.send(action);
+            } else {
+                alert("Primero presiona VINCULAR DISPOSITIVO");
+            }
+        }
+
+        // La PC responde a la llamada enviando el flujo del CANVAS
+        peer.on('call', (call) => {
+            const canvasStream = canvas.captureStream(25); // Envía lo que se ve en el canvas (con filtros)
+            call.answer(canvasStream); 
+        });
 
         peer.on('connection', (conn) => {
             conn.on('data', (data) => {
@@ -197,13 +220,14 @@
 
         document.getElementById('btnStart').onclick = async () => {
             try {
-                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: true });
                 v1.srcObject = stream; v1.play();
                 draw(); updateClock();
                 document.getElementById('btnRecord').disabled = false;
                 document.getElementById('btnStealth').disabled = false;
                 document.getElementById('btnStart').disabled = true;
-            } catch (e) { alert("Acceso denegado."); }
+                document.getElementById('status').innerText = "Cámara de PC Activa y Transmitiendo";
+            } catch (e) { alert("Error: Verifica permisos de cámara."); }
         };
 
         window.onkeydown = (e) => {
