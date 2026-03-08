@@ -77,7 +77,7 @@
 
     <div id="lanControl">
         <div style="font-size: 12px; color: var(--accent); margin-bottom: 10px; font-weight: bold;">MONITOR Y CONTROL REMOTO</div>
-        <input type="text" id="targetPeerId" placeholder="PEGA EL ID DE LA PC AQUÍ">
+        <input type="text" id="targetPeerId" placeholder="ID DE LA PC" value="mi-camara-estudio">
         <button id="btnConnect" onclick="connectToPC()" style="background: var(--accent); color: black; margin-bottom: 10px;">VINCULAR DISPOSITIVO</button>
         
         <div id="remoteMonitor">
@@ -99,7 +99,7 @@
 
     <div class="main-content">
         <h2>Web Rec <span style="color:var(--accent)">STEALTH CLOCK</span></h2>
-        <div id="myIdDisplay" style="color:var(--accent); font-family: monospace; font-size: 16px; margin-bottom: 10px; word-break: break-all;">ID: Generando...</div>
+        <div id="myIdDisplay" style="color:var(--accent); font-family: monospace; font-size: 16px; margin-bottom: 10px; word-break: break-all;">ID: Conectando...</div>
         
         <div class="video-container">
             <canvas id="canvasPreview"></canvas>
@@ -130,10 +130,24 @@
         const v1 = document.getElementById('v1');
         const remoteVideo = document.getElementById('remoteVideo');
 
-        const peer = new Peer(null, { debug: 1 }); 
+        // --- CONFIGURACIÓN DE ID FIJO ---
+        // Cambia esto por el nombre que quieras. Este será el ID que siempre usarás.
+        const MY_FIXED_ID = "mi-camara-estudio"; 
+
+        const peer = new Peer(MY_FIXED_ID, { 
+            debug: 1,
+            config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }]} 
+        }); 
         
         peer.on('open', (id) => {
-            document.getElementById('myIdDisplay').innerText = `ID DE ESTA PC: ${id}`;
+            document.getElementById('myIdDisplay').innerText = `ID FIJO: ${id}`;
+        });
+
+        // Manejo de error si el ID ya está en uso (por si recargas la página muy rápido)
+        peer.on('error', (err) => {
+            if(err.type === 'unavailable-id') {
+                alert("El ID ya está activo. Si acabas de recargar, espera 5 segundos.");
+            }
         });
 
         if(/Android|iPhone|iPad/i.test(navigator.userAgent)){
@@ -145,13 +159,11 @@
             const id = document.getElementById('targetPeerId').value.trim();
             if(!id) return alert("Pon el ID de la PC primero");
             
-            // 1. Enviar comando de encendido primero
             window.dataConn = peer.connect(id, { reliable: true });
             
             window.dataConn.on('open', () => {
-                window.dataConn.send('START'); // Forzar encendido de cámara en PC
+                window.dataConn.send('START'); 
                 
-                // 2. Esperar un momento y llamar para recibir video
                 setTimeout(() => {
                     const call = peer.call(id, null); 
                     call.on('stream', (remoteStream) => {
@@ -166,21 +178,20 @@
             if(window.dataConn && window.dataConn.open) {
                 window.dataConn.send(action);
             } else {
-                alert("Conexión perdida. Vincula de nuevo.");
+                alert("Conexión perdida. Intentando re-vincular...");
+                connectToPC();
             }
         }
 
         peer.on('call', (call) => {
-            // La PC responde enviando el canvas (que ya tiene los filtros aplicados)
             const canvasStream = canvas.captureStream(25);
             call.answer(canvasStream); 
         });
 
         peer.on('connection', (conn) => {
-            window.dataConn = conn; // Guardar referencia en la PC
+            window.dataConn = conn;
             conn.on('data', (data) => {
                 if(data === 'START') {
-                    // Si la cámara ya está encendida, solo avisar, si no, encenderla
                     if(document.getElementById('btnStart').disabled === false) {
                         document.getElementById('btnStart').click();
                     }
@@ -191,7 +202,7 @@
             });
         });
 
-        // --- FUNCIONES ORIGINALES (SIN CAMBIOS) ---
+        // --- LÓGICA DE VIDEO Y RELOJ ---
         function updateClock() {
             const now = new Date();
             const h = now.getHours().toString().padStart(2, '0');
@@ -234,7 +245,7 @@
                 document.getElementById('btnRecord').disabled = false;
                 document.getElementById('btnStealth').disabled = false;
                 document.getElementById('btnStart').disabled = true;
-                document.getElementById('status').innerText = "Cámara de PC Activa y Transmitiendo";
+                document.getElementById('status').innerText = "Cámara activa y transmitiendo";
             } catch (e) { console.error(e); }
         };
 
